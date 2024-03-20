@@ -45,7 +45,7 @@ var hashes = []testhash {
 	{ append([]byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE, }, hashPW("hello", []byte{0xEE}, 1)...), nil },
 }
 
-func toBase64(pwd *PWDataV3) (string, error) {
+func toBase64(pwd *PWHash) (string, error) {
 	a, err := pwd.MarshalText()
 	if err != nil {
 		return "", err
@@ -53,8 +53,8 @@ func toBase64(pwd *PWDataV3) (string, error) {
 	return string(a), nil
 }
 
-func fromBase64(s string) (*PWDataV3, error) {
-	var pwd PWDataV3
+func fromBase64(s string) (*PWHash, error) {
+	var pwd PWHash
 	err := pwd.UnmarshalText([]byte(s))
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func fromBase64(s string) (*PWDataV3, error) {
 	return &pwd, nil
 }
 
-func TestPWDataV3(t *testing.T) {
+func TestPWHash(t *testing.T) {
 	t.Run("Verify", func(t *testing.T) {
 		for _, user := range testusers {
 			pwd, err := fromBase64(user.b64)
@@ -122,7 +122,7 @@ func TestPWDataV3(t *testing.T) {
 	})
 	t.Run("UnmarshalBinary", func(t *testing.T) {
 		for i, h := range hashes {
-			var pwd PWDataV3
+			var pwd PWHash
 			err := pwd.UnmarshalBinary(h.hash)
 			if err != h.err {
 				t.Errorf("hash test %d: want error %v; got %v", i, h.err, err)
