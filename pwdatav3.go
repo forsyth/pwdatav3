@@ -1,13 +1,13 @@
-// Package pwdatav3 implements password handling compatible with Microsoft's ASP.NET Core, including
+// Package pwdatav3 implements password hashing and verification compatible with Microsoft's ASP.NET Core, including
 // equality of the hashed salted passwords.
 // It is useful when switching from C# to Go for the server side of an application,
 // avoiding the need to reset passwords when switching.
 //
-// To allow implementation of different databases but with ASP.NET compatible encryption,
-// the package exports the low-level PWDataV3 type, with a set of operations to hash and verify passwords.
+// The type [PWDataV3] provides compatible hashing and verify functions.
 package pwdatav3
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/pbkdf2"
-	"io"
 )
 
 var (
@@ -27,12 +26,10 @@ var (
 	ErrParameter = errors.New("invalid hash function parameter")
 )
 
-// PWDataV3 represents Version 3 of
-// PBKDF2 with HMAC-SHA256, 128-bit salt, 256-bit subkey, 10000 iterations.
-// Format: { 0x01, prf (UInt32), iter count (UInt32), salt length (UInt32), salt, subkey }
-// (All UInt32s are stored big-endian.)
+// PWDataV3 represents a hashed value (version 3 for ASP.NET) using
+// PBKDF2 with HMAC-SHA256, and by default, 128-bit salt, 256-bit hash and 10000 iterations.
 type PWDataV3 struct {
-	ver  uint8  // 0x01
+	ver  uint8  // 0x01 => v3 (!)
 	prf  uint32 // 1 => sha256
 	iter uint32
 	salt []byte
@@ -50,73 +47,30 @@ const (
 	DefaultSaltLen = 16
 )
 
-// New returns a PWDataV3 value for the given salt, iterations and hash.
-func New(salt []byte, iter int, hash []byte) *PWDataV3 {
-	saltc := make([]byte, len(salt))
-	copy(saltc, salt)
-	hashc := make([]byte, len(hash))
-	copy(hashc, hash)
-	return &PWDataV3{
-		ver:  v3,
-		prf:  prfSHA256,
-		iter: uint32(iter),
-		salt: saltc,
-		hash: hashc,
-	}
-}
-
-// NewFromPassword returns a PWDataV3 value for the given password and iterations (DefaultIter is a compatible choice),
-// using a salt of DefaultSaltLen. It returns nil and an error if it cannot make a random salt.
-func NewFromPassword(pw string, iter int) (*PWDataV3, error) {
+// New returns a hashed value for the given password and iterations (DefaultIter is an ASP.NET-compatible choice),
+// using a random salt that is DefaultSaltLen bytes long. It returns nil and an error only if it cannot make a random salt,
+// which suggests trouble with the underlying random number source.
+func New(pw string, iter int) (*PWDataV3, error) {
 	salt := make([]byte, DefaultSaltLen)
-	_, err := io.ReadFull(rand.Reader, salt)
+	_, err := rand.Read(salt)
 	if err != nil {
 		return nil, fmt.Errorf("cannot make salt value: %v", err)
 	}
-	dk := hashPW(pw, salt, iter)
-	o := &PWDataV3{
+	pd := &PWDataV3{
 		ver:  v3,
 		prf:  prfSHA256,
 		iter: uint32(iter),
 		salt: salt,
-		hash: dk,
+		hash: hashPW(pw, salt, iter),
 	}
-	return o, nil
+	return pd, nil
 }
 
-// Must insists that NewFromPassword did not fail, by panicking if it does.
-// Failure implies a problem with (access to) cryptographic random numbers.
-func Must(pw *PWDataV3, err error) *PWDataV3 {
-	if err != nil {
-		panic(err)
-	}
-	return pw
-}
-
-// VerifyPassword returns true iff the given plaintext password corresponds to the
-// version hashed in d.
-func (d *PWDataV3) VerifyPassword(pw string) bool {
-	dk := hashPW(pw, d.salt, int(d.iter))
-	return subtle.ConstantTimeCompare(d.hash, dk) == 1
-}
-
-// VerifyHash returns true iff the plaintext password pw corresponds to the version
-// hashed and encoded (in base 64) in hash. If the base 64 encoding is wrong or corrupt,
-// VerifyHash returns false and the error describes the internal error,
-// but VerifyHash wastes time so it's less obvious to an observer.
-func VerifyHash(hash, pw string) (bool, error) {
-	d, err := fromBase64(hash)
-	if err != nil {
-		d = Must(NewFromPassword("", DefaultIter))
-		return subtle.ConstantTimeCompare(d.hash, d.hash) != 1, err // ie, false
-	}
-	dk := hashPW(pw, d.salt, int(d.iter))
-	return subtle.ConstantTimeCompare(d.hash, dk) == 1, nil
-}
-
-// String returns the base 64 encoding used in the database, for Stringer.
-func (d *PWDataV3) String() string {
-	return d.toBase64()
+// Verify returns true iff the given plaintext password corresponds to the
+// value hashed in pd.
+func (pd *PWDataV3) Verify(pw string) bool {
+	dk := hashPW(pw, pd.salt, int(pd.iter))
+	return subtle.ConstantTimeCompare(pd.hash, dk) == 1
 }
 
 // hashPW applies the underlying key transformation to a plaintext password.
@@ -126,60 +80,75 @@ func hashPW(password string, salt []byte, iter int) []byte {
 	return pbkdf2.Key([]byte(password), salt, iter, sha256.Size, sha256.New)
 }
 
-func fromBase64(s string) (*PWDataV3, error) {
-	out, err := base64.StdEncoding.DecodeString(s)
+// UnmarshalText unmarshals a hashed value decoded from text, typically the value stored in a user table record.
+func (pd *PWDataV3) UnmarshalText(text []byte) error {
+	out := make([]byte, base64.StdEncoding.DecodedLen(len(text)))
+	n, err := base64.StdEncoding.Decode(out, text)
 	if err != nil {
-		return nil, fmt.Errorf("pw data: %v", err)
+		return fmt.Errorf("password encoding: %v", err)
 	}
-	pwd := &PWDataV3{}
-	err = pwd.unpack(out)
-	if err != nil {
-		return nil, err
-	}
-	return pwd, nil
+	return pd.UnmarshalBinary(out[:n])
 }
 
-func (d *PWDataV3) toBase64() string {
-	return base64.StdEncoding.EncodeToString(d.pack())
+// MarshalText returns the hashed value encoded as required for ASP.NET's user table.
+// No error can result.
+func (pd *PWDataV3) MarshalText() ([]byte, error) {
+	p, _ := pd.MarshalBinary()
+	out := make([]byte, base64.StdEncoding.EncodedLen(len(p)))
+	base64.StdEncoding.Encode(out, p)
+	return out, nil
 }
 
-const hdrLength = 1 + 3*4
+const hdrLength = 1 + 3*4 // byte and 3 ints
 
-func (d *PWDataV3) unpack(a []byte) error {
+// MarshalBinary returns a binary representation of a hashed value that is identical to ASP.NET's:
+//
+//	ver[1]=0x01, prf[4], iter[4], saltLen[4], salt[n], hashed[sha256.Size]
+//
+// (All 32-bit ints are stored big-endian.)
+// No error can result.
+func (pd *PWDataV3) MarshalBinary() ([]byte, error) {
+	out := make([]byte, hdrLength+len(pd.salt)+len(pd.hash))
+	out[0] = pd.ver
+	binary.BigEndian.PutUint32(out[1:], pd.prf)
+	binary.BigEndian.PutUint32(out[1+4:], pd.iter)
+	binary.BigEndian.PutUint32(out[1+4+4:], uint32(len(pd.salt)))
+	copy(out[hdrLength:], pd.salt)
+	copy(out[hdrLength+len(pd.salt):], pd.hash)
+	return out, nil
+}
+
+// UnmarshalBinary extracts the components from a packed value.
+// Various errors can be returned if the format is wrong or uses unsupported parameters.
+// The pd value is unchanged on error.
+func (pd *PWDataV3) UnmarshalBinary(a []byte) error {
+	// check values before assigning anything to pd
 	if len(a) < hdrLength {
 		return ErrCorrupt
 	}
-	d.ver = a[0]
-	if d.ver != v3 {
+	ver := a[0]
+	if ver != v3 {
 		return ErrVersion
 	}
-	d.prf = binary.BigEndian.Uint32(a[1:])
-	if d.prf != prfSHA256 {
+	prf := binary.BigEndian.Uint32(a[1:])
+	if prf != prfSHA256 {
 		return ErrFunction
 	}
-	d.iter = binary.BigEndian.Uint32(a[1+4:])
-	if d.iter > 100000 {
+	iter := binary.BigEndian.Uint32(a[1+4:])
+	if iter < 1 || iter > 100000 {
 		return ErrParameter
 	}
 	saltlen := binary.BigEndian.Uint32(a[1+4+4:])
-	if saltlen > 64 {
+	if saltlen < 1 || saltlen > 64 {
 		return ErrParameter
 	}
-	if hdrLength+saltlen >= uint32(len(a)) {
+	if hdrLength+saltlen+sha256.Size != uint32(len(a)) {
 		return ErrCorrupt
 	}
-	d.salt = a[hdrLength : hdrLength+saltlen]
-	d.hash = a[hdrLength+saltlen:]
+	pd.ver = ver
+	pd.prf = prf
+	pd.iter = iter
+	pd.salt = bytes.Clone(a[hdrLength : hdrLength+saltlen])
+	pd.hash = bytes.Clone(a[hdrLength+saltlen:])
 	return nil
-}
-
-func (d *PWDataV3) pack() []byte {
-	out := make([]byte, hdrLength+len(d.salt)+len(d.hash))
-	out[0] = d.ver
-	binary.BigEndian.PutUint32(out[1:], d.prf)
-	binary.BigEndian.PutUint32(out[1+4:], d.iter)
-	binary.BigEndian.PutUint32(out[1+4+4:], uint32(len(d.salt)))
-	copy(out[hdrLength:], d.salt)
-	copy(out[hdrLength+len(d.salt):], d.hash)
-	return out
 }

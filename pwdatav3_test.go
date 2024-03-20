@@ -2,7 +2,6 @@ package pwdatav3
 
 import (
 	"bytes"
-	"encoding/base64"
 	_ "fmt"
 	"testing"
 )
@@ -12,100 +11,121 @@ type testuser struct {
 	b64  string
 	pw   string
 	err1 string
-	err2 string
 }
 
-var testusers = []testuser{
+var testusers = []testuser {
 	{
 		"josephine@example.com",
 		"AQAAAAEAACcQAAAAEO4k5r1SgFuCYAS8xfu/Mnu5iZUqh+DgSRU4IyJpD+mVo4KdbI1BwiF3KcY1V6AapQ==",
 		"In2Egypt!",
-		"pw data: illegal base64 data at input byte 84",
-		ErrCorrupt.Error(),
+		"password encoding: illegal base64 data at input byte 84",
 	},
 	{
 		"jake@example.com",
 		"AQAAAAEAACcQAAAAEHhGT2mW9BMcWhMNA4lNj80h8OULQyuvqbSR99lZ+GWsuhA2H6HLxcZI8+RhtxV5FA==",
 		"REdNuIlsAnyejH3",
-		"pw data: illegal base64 data at input byte 84",
-		ErrCorrupt.Error(),
+		"password encoding: illegal base64 data at input byte 84",
 	},
 }
 
-func unpack(a []byte, t *testing.T) *PWDataV3 {
-	var pwdata PWDataV3
-	err := pwdata.unpack(a)
-	if err != nil {
-		t.Errorf("want nil; got %v", err)
-	}
-	return &pwdata
+type testhash struct {
+	hash	[]byte
+	err	error
 }
 
-func frombase64(s string, t *testing.T) []byte {
-	out, err := base64.StdEncoding.DecodeString(s)
+var hashes = []testhash {
+	{ []byte{ 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, ErrCorrupt },
+	{ []byte{ 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }, ErrVersion },
+	{ []byte{ v3, 0, 0, 0, 0, 4, 5, 6, 7, 8, 9, 10, 11 }, ErrFunction },
+	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 4, 5, 6, 7, 8, 9, 10, 11 }, ErrParameter },
+	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 0, 8, 9, 10, 11 }, ErrParameter },
+	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 8, 9, 10, 11 }, ErrParameter },
+	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1 }, ErrCorrupt },
+	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE, }, ErrCorrupt },
+	{ append([]byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE, }, hashPW("hello", []byte{0xEE}, 1)...), nil },
+}
+
+func toBase64(pwd *PWDataV3) (string, error) {
+	a, err := pwd.MarshalText()
 	if err != nil {
-		t.Errorf("error decoding [%s]; got %v", s, err)
+		return "", err
 	}
-	return out
+	return string(a), nil
+}
+
+func fromBase64(s string) (*PWDataV3, error) {
+	var pwd PWDataV3
+	err := pwd.UnmarshalText([]byte(s))
+	if err != nil {
+		return nil, err
+	}
+	return &pwd, nil
 }
 
 func TestPWDataV3(t *testing.T) {
-	t.Run("VerifyHash", func(t *testing.T) {
+	t.Run("Verify", func(t *testing.T) {
 		for _, user := range testusers {
-			pwdata, err := fromBase64(user.b64)
+			pwd, err := fromBase64(user.b64)
 			if err != nil {
 				t.Errorf("%s: error decoding [%s]; got %v", user.name, user.b64, err)
+				continue
 			}
-			//fmt.Printf("%s %#v\n", user.name, pwdata)
-			s := pwdata.toBase64()
-			//fmt.Printf("%#v\n", s)
+			s, err := toBase64(pwd)
+			if err != nil {
+				t.Errorf("%s: error converting to base64; got %v", user.name, err)
+				continue
+			}
 			if s != user.b64 {
 				t.Errorf("%s: repacked base64 encoding differs: want %v got %v", user.name, user.b64, s)
 			}
-			ok, err := VerifyHash(user.b64, user.pw)
-			if !ok {
-				if err == nil {
-					t.Errorf("%s: failed to verify password against stored hash", user.name)
-				} else {
-					t.Errorf("%s: failed to unpack hash value: %v", user.name, err)
-				}
+			if ok := pwd.Verify(user.pw); !ok {
+				t.Errorf("%s: failed to verify correct password %q against stored hash", user.name, user.pw)
 			}
-			ok, err = VerifyHash(user.b64+"????", user.pw)
-			if ok {
-				t.Errorf("%s: invalid stored hash still verified", user.name)
+			if ok := pwd.Verify(user.pw + "?"); ok {
+				t.Errorf("%s: wrong password still verified", user.name)
+			}
+			if ok := pwd.Verify(""); ok {
+				t.Errorf("%s: empty password still verified", user.name)
+			}
+			pwd, err = fromBase64(user.b64 + "??")
+			if err == nil {
+				t.Errorf("%s: invalid hash accepted without error; want %s", user.name, user.err1)
 			} else if err.Error() != user.err1 {
 				t.Errorf("%s: invalid hash detected but different error: want %s; got %v", user.name, user.err1, err.Error())
+			}
+			n, err := New(user.pw, DefaultIter)
+			if err != nil {
+				t.Errorf("%s: new from password: want no error; got %v", user.name, err)
+			}
+			s, _ = toBase64(n)
+			if user.b64 == s {
+				t.Errorf("%s: implausibly got same b64 with new salt", user.name)
 			}
 		}
 	})
 	t.Run("hashPW", func(t *testing.T) {
 		for _, user := range testusers {
-			pwdata, err := fromBase64(user.b64)
+			pwd, err := fromBase64(user.b64)
 			if err != nil {
 				t.Errorf("%s: error decoding; got %v", user.name, err)
 			}
-			dk := hashPW(user.pw, pwdata.salt, int(pwdata.iter))
-			if !bytes.Equal(dk, pwdata.hash) {
-				t.Errorf("%s: hashed value not equal; want %#v got %#v", user.name, pwdata.hash, dk)
+			dk := hashPW(user.pw, pwd.salt, int(pwd.iter))
+			if !bytes.Equal(dk, pwd.hash) {
+				t.Errorf("%s: hashed value not equal; want %#v got %#v", user.name, pwd.hash, dk)
 			}
 			//fmt.Printf("%s: %#v\n", user.name, dk)
-			dk = hashPW(user.pw+"X", pwdata.salt, int(pwdata.iter))
-			if bytes.Equal(dk, pwdata.hash) {
+			dk = hashPW(user.pw+"X", pwd.salt, int(pwd.iter))
+			if bytes.Equal(dk, pwd.hash) {
 				t.Errorf("%s: hashed values unexpectedly equal", user.name)
 			}
-			if !pwdata.VerifyPassword(user.pw) {
-				t.Errorf("%s: failed to verify correct password %q", user.name, user.pw)
-			}
-			if pwdata.VerifyPassword(user.pw + "XXX") {
-				t.Errorf("%s: verified incorrect passwrod", user.name)
-			}
-			n, err := NewFromPassword(user.pw, DefaultIter)
-			if err != nil {
-				t.Errorf("%s: new from password: %v", user.name, err)
-			}
-			//fmt.Printf("%s: new: %#v", user.name, n)
-			if user.b64 == n.toBase64() {
-				t.Errorf("%s: implausibly got same b64 with new salt", user.name)
+		}
+	})
+	t.Run("UnmarshalBinary", func(t *testing.T) {
+		for i, h := range hashes {
+			var pwd PWDataV3
+			err := pwd.UnmarshalBinary(h.hash)
+			if err != h.err {
+				t.Errorf("hash test %d: want error %v; got %v", i, h.err, err)
 			}
 		}
 	})
