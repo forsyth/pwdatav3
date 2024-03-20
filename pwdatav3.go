@@ -80,6 +80,12 @@ func hashPW(password string, salt []byte, iter int) []byte {
 	return pbkdf2.Key([]byte(password), salt, iter, sha256.Size, sha256.New)
 }
 
+// String returns the Base64 encoding.
+func (pd *PWDataV3) String() string {
+	a, _ := pd.MarshalText()	// no error return, see below
+	return string(a)
+}
+
 // UnmarshalText unmarshals a hashed value decoded from text, typically the value stored in a user table record.
 func (pd *PWDataV3) UnmarshalText(text []byte) error {
 	out := make([]byte, base64.StdEncoding.DecodedLen(len(text)))
