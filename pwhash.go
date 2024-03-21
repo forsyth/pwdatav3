@@ -109,7 +109,7 @@ const hdrLength = 1 + 3*4 // byte and 3 ints
 
 // MarshalBinary returns a binary representation of a hashed value that is identical to ASP.NET's:
 //
-//	ver[1]=0x01, prf[4], iter[4], saltLen[4], salt[n], hashed[sha256.Size]
+//	ver[1]=0x01, prf[4]=0x01, iter[4], saltLen[4], salt[n], hashed[sha256.Size]
 //
 // (All 32-bit ints are stored big-endian.)
 // No error can result.
