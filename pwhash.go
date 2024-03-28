@@ -20,10 +20,11 @@ import (
 
 var (
 	// errors returned for a corrupt base64 representation.
-	ErrCorrupt   = errors.New("malformed hashed value")
-	ErrVersion   = errors.New("unknown hashed format version")
-	ErrFunction  = errors.New("unknown hash function")
-	ErrParameter = errors.New("invalid hash function parameter")
+	ErrCorrupt                   = errors.New("malformed hashed value")
+	ErrVersion                   = errors.New("unknown hashed format version")
+	ErrFunction                  = errors.New("unknown hash function")
+	ErrParameter                 = errors.New("invalid hash function parameter")
+	ErrMismatchedHashAndPassword = errors.New("pwdatav3: hashedPassword is not the hash of the given password")
 )
 
 // PWHash represents a hashed value (version 3 for ASP.NET) using
@@ -46,6 +47,33 @@ const (
 	// Default salt length used by ASP.NET.
 	DefaultSaltLen = 16
 )
+
+// GemerateFromPassword returns the hash of the password with the given iterations, as a binary encoding.
+// [DefaultIter] is the iteration count compatible with ASP.NET. Use [CompareHashAndPassword], defined in
+// this package, to compare the returned hashed password with its cleartext version.
+// The only possible error is a failure to make a random salt.
+func GenerateFromPassword(password []byte, iter int) ([]byte, error) {
+	pd, err := New(string(password), iter)
+	if err != nil {
+		return nil, err
+	}
+	return pd.MarshalBinary()
+}
+
+// CompareHashAndPassword(compares a hashed password in its binary representation,
+// as produced by [GenerateFromPassword],
+// with its possible plaintext equivalent, returning nil on success or an error on failure.
+func CompareHashAndPassword(hashedPassword, password []byte) error {
+	var pd PWHash
+	err := pd.UnmarshalBinary(hashedPassword)
+	if err != nil {
+		return err
+	}
+	if !pd.Verify(string(password)) {
+		return ErrMismatchedHashAndPassword
+	}
+	return nil
+}
 
 // New returns a hashed value for the given password and iterations (DefaultIter is an ASP.NET-compatible choice),
 // using a random salt that is DefaultSaltLen bytes long. It returns nil and an error only if it cannot make a random salt,
@@ -82,7 +110,7 @@ func hashPW(password string, salt []byte, iter int) []byte {
 
 // String returns the Base64 encoding.
 func (pd *PWHash) String() string {
-	a, _ := pd.MarshalText()	// no error return, see below
+	a, _ := pd.MarshalText() // no error return, see below
 	return string(a)
 }
 

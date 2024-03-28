@@ -13,7 +13,7 @@ type testuser struct {
 	err1 string
 }
 
-var testusers = []testuser {
+var testusers = []testuser{
 	{
 		"josephine@example.com",
 		"AQAAAAEAACcQAAAAEO4k5r1SgFuCYAS8xfu/Mnu5iZUqh+DgSRU4IyJpD+mVo4KdbI1BwiF3KcY1V6AapQ==",
@@ -29,20 +29,20 @@ var testusers = []testuser {
 }
 
 type testhash struct {
-	hash	[]byte
-	err	error
+	hash []byte
+	err  error
 }
 
-var hashes = []testhash {
-	{ []byte{ 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, ErrCorrupt },
-	{ []byte{ 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }, ErrVersion },
-	{ []byte{ v3, 0, 0, 0, 0, 4, 5, 6, 7, 8, 9, 10, 11 }, ErrFunction },
-	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 4, 5, 6, 7, 8, 9, 10, 11 }, ErrParameter },
-	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 0, 8, 9, 10, 11 }, ErrParameter },
-	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 8, 9, 10, 11 }, ErrParameter },
-	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1 }, ErrCorrupt },
-	{ []byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE, }, ErrCorrupt },
-	{ append([]byte{ v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE, }, hashPW("hello", []byte{0xEE}, 1)...), nil },
+var hashes = []testhash{
+	{[]byte{0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, ErrCorrupt},
+	{[]byte{0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, ErrVersion},
+	{[]byte{v3, 0, 0, 0, 0, 4, 5, 6, 7, 8, 9, 10, 11}, ErrFunction},
+	{[]byte{v3, 0, 0, 0, byte(prfSHA256), 4, 5, 6, 7, 8, 9, 10, 11}, ErrParameter},
+	{[]byte{v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 0, 8, 9, 10, 11}, ErrParameter},
+	{[]byte{v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 8, 9, 10, 11}, ErrParameter},
+	{[]byte{v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1}, ErrCorrupt},
+	{[]byte{v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE}, ErrCorrupt},
+	{append([]byte{v3, 0, 0, 0, byte(prfSHA256), 0, 0, 0, 1, 0, 0, 0, 1, 0xEE}, hashPW("hello", []byte{0xEE}, 1)...), nil},
 }
 
 func toBase64(pwd *PWHash) (string, error) {
@@ -126,6 +126,23 @@ func TestPWHash(t *testing.T) {
 			err := pwd.UnmarshalBinary(h.hash)
 			if err != h.err {
 				t.Errorf("hash test %d: want error %v; got %v", i, h.err, err)
+			}
+		}
+	})
+	t.Run("GenerateFromPassword", func(t *testing.T) {
+		for _, user := range testusers {
+			pw := []byte(user.pw) // bad planning
+			hashed, err := GenerateFromPassword(pw, DefaultIter)
+			if err != nil {
+				t.Errorf("GenerateFromPassword: user %q pw %q: got error %v", user.name, user.pw, err)
+				continue
+			}
+			if err = CompareHashAndPassword(hashed, pw); err != nil {
+				t.Errorf("hash and password mismatch: user %q pw %q: got error %v", user.name, user.pw, err)
+				continue
+			}
+			if err = CompareHashAndPassword(hashed, []byte(user.pw+"zonk")); err == nil {
+				t.Errorf("hash and wrong password matched: user %q", user.name)
 			}
 		}
 	})
