@@ -132,17 +132,19 @@ func TestPWHash(t *testing.T) {
 	t.Run("GenerateFromPassword", func(t *testing.T) {
 		for _, user := range testusers {
 			pw := []byte(user.pw) // bad planning
-			hashed, err := GenerateFromPassword(pw, DefaultIter)
-			if err != nil {
-				t.Errorf("GenerateFromPassword: user %q pw %q: got error %v", user.name, user.pw, err)
-				continue
-			}
-			if err = CompareHashAndPassword(hashed, pw); err != nil {
-				t.Errorf("hash and password mismatch: user %q pw %q: got error %v", user.name, user.pw, err)
-				continue
-			}
-			if err = CompareHashAndPassword(hashed, []byte(user.pw+"zonk")); err == nil {
-				t.Errorf("hash and wrong password matched: user %q", user.name)
+			for iter := DefaultIter; iter > 0; iter /= 10 {
+				hashed, err := GenerateFromPassword(pw, DefaultIter)
+				if err != nil {
+					t.Errorf("GenerateFromPassword: user %q pw %q: got error %v", user.name, user.pw, err)
+					continue
+				}
+				if err = CompareHashAndPassword(hashed, pw); err != nil {
+					t.Errorf("hash and password mismatch: user %q pw %q: got error %v", user.name, user.pw, err)
+					continue
+				}
+				if err = CompareHashAndPassword(hashed, []byte(user.pw+"zonk")); err == nil {
+					t.Errorf("hash and wrong password matched: user %q", user.name)
+				}
 			}
 		}
 	})
