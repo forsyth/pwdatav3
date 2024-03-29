@@ -148,4 +148,18 @@ func TestPWHash(t *testing.T) {
 			}
 		}
 	})
+	t.Run("DecodeString", func(t *testing.T) {
+		for _, user := range testusers {
+			hashed, err := DecodeString(user.b64)
+			if err != nil {
+				t.Errorf("DecodeString: user %q: got error %v", user.name, err)
+				continue
+			}
+			s := EncodeToString(hashed)
+			if s != user.b64 {
+				t.Errorf("EncodeToString: user %q b64 format: want %q, got %q", user.name, user.b64, s)
+				continue
+			}
+		}
+	})
 }

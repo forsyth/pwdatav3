@@ -49,7 +49,7 @@ const (
 )
 
 // GemerateFromPassword returns the hash of the password with the given iterations, as a binary encoding.
-// [DefaultIter] is the iteration count compatible with ASP.NET. Use [CompareHashAndPassword], defined in
+// ([DefaultIter] is the iteration count compatible with ASP.NET.) Use [CompareHashAndPassword], defined in
 // this package, to compare the returned hashed password with its cleartext version.
 // The only possible error is a failure to make a random salt.
 func GenerateFromPassword(password []byte, iter int) ([]byte, error) {
@@ -75,8 +75,26 @@ func CompareHashAndPassword(hashedPassword, password []byte) error {
 	return nil
 }
 
-// New returns a hashed value for the given password and iterations (DefaultIter is an ASP.NET-compatible choice),
-// using a random salt that is DefaultSaltLen bytes long. It returns nil and an error only if it cannot make a random salt,
+// EncodeToString returns a base64 form of the hashed password compatible with ASP.NET's password-file format,
+// but also usable elsewhere.
+func EncodeToString(hashedPassword []byte) string {
+	out := make([]byte, base64.StdEncoding.EncodedLen(len(hashedPassword)))
+	base64.StdEncoding.Encode(out, hashedPassword)
+	return string(out)
+}
+
+// DecodeString returns the hashed password given its base64 representation as produced by [EncodeToString].
+func DecodeString(s string) ([]byte, error) {
+	var pd PWHash
+	err := pd.UnmarshalText([]byte(s))
+	if err != nil {
+		return nil, err
+	}
+	return pd.MarshalBinary()
+}
+
+// New returns a hashed value for the given password and iterations. [DefaultIter] is an ASP.NET-compatible choice,
+// using a random salt that is [DefaultSaltLen] bytes long. It returns nil and an error only if it cannot make a random salt,
 // which suggests trouble with the underlying random number source.
 func New(pw string, iter int) (*PWHash, error) {
 	salt := make([]byte, DefaultSaltLen)
